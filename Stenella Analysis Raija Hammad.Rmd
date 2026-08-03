@@ -1,0 +1,409 @@
+---
+title: "Raija's Stenella Analysis"
+output: html_notebook
+---
+
+This notebook contains the analysis of age-at-maturity, length-at-maturity and length-at-birth of Stnella spp. by Raija Hammad.
+
+First bring in the data files using the 'loading_data.R' script.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+rm(list = ls())
+# Load the necessary packages
+library(tidyverse)
+library(ggplot2)
+library(jagsUI)
+
+save.output <- T
+
+source("loading_data.R")
+
+# hard coding so neonates are classified as individuals under 125cm
+NEONATE_MAX_LENGTH <- 125
+
+# Clean maturity values
+stenella_clean <- Stenella %>%
+  filter(
+    IsMature %in% c("Y", "N"),
+    !is.na(Age),
+    !is.na(TotalLength_FIELD)
+  ) %>%
+  mutate(
+    isMature_bin = if_else(IsMature == "Y", 1, 0)
+  )
+
+# Create a function to run analysis on each species:
+logistic.regression.1sp <- function(species.name, species.data, neonate_max_length, MCMC.n.samples = 150000, MCMC.n.thin = 100, MCMC.n.burnin = 100000, MCMC.n.chains = 5) {
+  output.file <- paste0("RData/", species.name, "_Jags_")
+  
+  # Age at maturity  
+  species.data %>%
+    select(Age, TotalLength, isMature_bin) %>%
+    na.omit() -> AM.data
+  
+  # Regular logistic regression
+  glm_age <- glm(
+    isMature_bin ~ Age,
+    family = binomial,
+    data = AM.data
+  )
+  
+  glm_length <- glm(
+    isMature_bin ~ TotalLength,
+    family = binomial,
+    data = AM.data
+  )
+  
+  MCMC.params <- list(n.samples = MCMC.n.samples,
+                      n.thin = MCMC.n.thin,
+                      n.burnin = MCMC.n.burnin,
+                      n.chains = MCMC.n.chains)
+  
+  jags.data.AAM <- list(N = nrow(AM.data),
+                        X = as.vector(AM.data$Age),
+                        y = AM.data$isMature_bin)
+  
+  jags.params <- c("alpha", "beta")
+  if (!file.exists(paste0(output.file, "AAM.rds"))){
+    jm.AAM <- jagsUI::jags(jags.data.AAM,
+                           inits = NULL,
+                           parameters.to.save= jags.params,
+                           model.file = "models/model_logistic_regression_1sp.jags",
+                           n.chains = MCMC.params$n.chains,
+                           n.burnin = MCMC.params$n.burnin,
+                           n.thin = MCMC.params$n.thin,
+                           n.iter = MCMC.params$n.samples,
+                           DIC = T,
+                           parallel=T)
+    if (save.output)
+      saveRDS(jm.AAM,
+              file = paste0(output.file, "AAM.rds"))
+    
+  } else {
+    jm.AAM <- readRDS(paste0(output.file, "AAM.rds"))
+  }
+  
+  posterior::summarise_draws(jm.AAM$samples) -> AAM_Jags_summary
+  
+  ## Length at maturity starts here:
+  jags.data.LAM <- list(N = nrow(AM.data),
+                  X = as.vector(AM.data$TotalLength),
+                  y = AM.data$isMature_bin)
+
+  if (!file.exists(paste0(output.file, "LAM.rds"))){
+    jm.LAM <- jagsUI::jags(jags.data.LAM,
+                           inits = NULL,
+                           parameters.to.save= jags.params,
+                           model.file = "models/model_logistic_regression_1sp.jags",
+                           n.chains = MCMC.params$n.chains,
+                           n.burnin = MCMC.params$n.burnin,
+                           n.thin = MCMC.params$n.thin,
+                           n.iter = MCMC.params$n.samples,
+                           DIC = T,
+                           parallel=T)
+    
+    if (save.output)
+      saveRDS(jm.LAM,
+              file = paste0(output.file, "LAM.rds"))
+    
+  } else {
+    jm.LAM <- readRDS(paste0(output.file, "LAM.rds"))
+  }
+
+  posterior::summarise_draws(jm.LAM$samples) -> LAM_Jags_summary
+  
+  # Length at birth starts here:
+  
+  # making a fetal dataset
+  birth_fetus <- species.data %>%
+    filter(!is.na(FetusLength_Standard)) %>%
+    transmute(
+      Length = FetusLength_Standard,
+      Born = 0
+    ) 
+  # making a neonate dataset
+  birth_neonate <- species.data %>%
+    filter(
+      !is.na(TotalLength),
+      TotalLength < NEONATE_MAX_LENGTH
+    ) %>%
+    transmute(
+      Length = TotalLength,
+      Born = 1
+    )
+  # now combining the two
+  birth_data <- bind_rows(birth_fetus, birth_neonate)
+  
+  # regular logistic regression
+  glm_birth <- glm(
+    Born ~ Length,
+    family = binomial,
+    data = birth_data
+  )
+  
+  
+  jags.data.LAB <- list(N = nrow(birth_data),
+                        X = as.vector(birth_data$Length),
+                        y = birth_data$Born)
+  
+  if (!file.exists(paste0(output.file, "LAB.rds"))){
+    jm.LAB <- jagsUI::jags(jags.data.LAB,
+                           inits = NULL,
+                           parameters.to.save= jags.params,
+                           model.file = "models/model_logistic_regression_1sp.jags",
+                           n.chains = MCMC.params$n.chains,
+                           n.burnin = MCMC.params$n.burnin,
+                           n.thin = MCMC.params$n.thin,
+                           n.iter = MCMC.params$n.samples,
+                           DIC = T,
+                           parallel=T)
+    
+    saveRDS(jm.LAB,
+            file = paste0(output.file, "LAB.rds"))
+    
+  } else {
+    jm.LAB <- readRDS(paste0(output.file, "LAB.rds"))
+  }
+  
+  posterior::summarise_draws(jm.LAB$samples) -> LAB_Jags_summary
+  
+  return(list(jags.AAM = jm.AAM,
+              glm.AAM = glm_age,
+              summary.AAM = AAM_Jags_summary,
+              jags.LAM = jm.LAM,
+              glm.LAM = glm_length,
+              summary.LAM = LAM_Jags_summary,
+              jags.LAB = jm.LAB,
+              glm.LAB = glm_birth,
+              summary.LAB = LAB_Jags_summary,
+              MCMC.params = MCMC.params,
+              LAB.data = birth_data,
+              AM.data = AM.data))
+}
+```
+
+Analysis of S. coeruleoalba:
+
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+coeruleoalba.results <- logistic.regression.1sp(species.name = "coeruleoalba",
+                                                species.data = coeruleoalba,
+                                                neonate_max_length = NEONATE_MAX_LENGTH)
+
+```
+
+Analysis of S. longirostris:
+
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+longirostris.results <- logistic.regression.1sp(species.name = "longirostris",
+                                                species.data = longirostris,
+                                                neonate_max_length = NEONATE_MAX_LENGTH)
+
+```
+Analysis of S. attenuata:
+
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+attenuata.results <- logistic.regression.1sp(species.name = "attenuata",
+                                                species.data = attenuata,
+                                                neonate_max_length = NEONATE_MAX_LENGTH)
+
+```
+
+Hierarchical analyses:
+
+```{r}
+
+hierarchical.logistic.regression <- function(parameter, jags.data, MCMC.n.samples = 150000, MCMC.n.thin = 100, MCMC.n.burnin = 100000, MCMC.n.chains = 5){
+  output.file <- paste0("RData/", parameter, "_hierarchical_jags.rds")
+ if (!file.exists(output.file)){
+   jags.params <- c("alpha", "beta", "L0")
+   jm. <- jagsUI::jags(jags.data,
+                       inits = NULL,
+                       parameters.to.save= jags.params,
+                       model.file = "models/model_logistic_regression.jags",
+                       n.chains = MCMC.n.chains,
+                       n.burnin = MCMC.n.burnin,
+                       n.thin = MCMC.n.thin,
+                       n.iter = MCMC.n.samples,
+                       DIC = T,
+                       parallel=T)
+   
+   saveRDS(jm.,
+           file = output.file)
+   
+ } else {
+    jm. <- readRDS(output.file)
+  }
+  
+  posterior::summarise_draws(jm.$samples) -> Jags_summary
+  
+  return(list(jags.out = jm.,
+              summary = Jags_summary))
+}
+
+birth.all.sp <- rbind(
+  attenuata.results$LAB.data %>% mutate(species = "attenuata"),
+  longirostris.results$LAB.data %>% mutate(species = "longirostris"),
+  coeruleoalba.results$LAB.data %>% mutate(species = "coeruleoalba")) %>%
+  mutate(species.f = as.factor(species),
+            Born = as.integer(Born),
+            species_id = as.integer(species.f))
+
+jags.data.birth <- list(
+  N = nrow(birth.all.sp),
+  S = length(unique(birth.all.sp$species)),
+  y = birth.all.sp$Born,
+  species_id = birth.all.sp$species_id,
+  X = birth.all.sp$Length 
+)
+
+LAB.hierarchical <- hierarchical.logistic.regression(
+  parameter = "LAB",
+  jags.data = jags.data.birth)  
+
+# Age at maturity
+AM.all.sp <- rbind(
+  attenuata.results$AM.data %>% mutate(species = "attenuata"),
+  longirostris.results$AM.data %>% mutate(species = "longirostris"),
+  coeruleoalba.results$AM.data %>% mutate(species = "coeruleoalba")) %>%
+  mutate(species.f = as.factor(species),
+         Mature = isMature_bin,
+         species_id = as.integer(species.f))
+
+jags.data.AAM <-  list(
+  N = nrow(AM.all.sp),
+  S = length(unique(AM.all.sp$species)),
+  y = AM.all.sp$isMature,
+  species_id = AM.all.sp$species_id,
+  X = AM.all.sp$Age 
+)
+
+AAM.hierarchical <- hierarchical.logistic.regression(
+  parameter = "AAM",
+  jags.data = jags.data.AAM)  
+
+jags.data.LAM <-  list(
+  N = nrow(AM.all.sp),
+  S = length(unique(AM.all.sp$species)),
+  y = AM.all.sp$isMature,
+  species_id = AM.all.sp$species_id,
+  X = AM.all.sp$TotalLength 
+)
+LAM.hierarchical <- hierarchical.logistic.regression(
+  parameter = "LAM",
+  jags.data = jags.data.LAM)  
+
+```
+
+Make some plots:
+```{r}
+compute.L0 <- function(jags.samples){
+  samples.matrix <- as.matrix(jags.samples)
+  samples.beta <- samples.matrix[,"beta"]
+  samples.alpha <- samples.matrix[,"alpha"]
+  L0.samples <- -samples.alpha/samples.beta
+  
+}
+
+L0.AAM.coe <- compute.L0(coeruleoalba.results$jags.AAM$samples)
+L0.AAM.att <- compute.L0(attenuata.results$jags.AAM$samples)
+L0.AAM.lon <- compute.L0(longirostris.results$jags.AAM$samples)
+
+L0.LAM.coe <- compute.L0(coeruleoalba.results$jags.LAM$samples)
+L0.LAM.att <- compute.L0(attenuata.results$jags.LAM$samples)
+L0.LAM.lon <- compute.L0(longirostris.results$jags.LAM$samples)
+
+L0.LAB.coe <- compute.L0(coeruleoalba.results$jags.LAB$samples)
+L0.LAB.att <- compute.L0(attenuata.results$jags.LAB$samples)
+L0.LAB.lon <- compute.L0(longirostris.results$jags.LAB$samples)
+
+L0.AAM.df.1sp <- data.frame(L0 = c(L0.AAM.att, L0.AAM.coe, L0.AAM.lon),
+                            Species = c(rep("att", length(L0.AAM.att)),
+                                        rep("coe", length(L0.AAM.coe)),
+                                        rep("lon", length(L0.AAM.lon))),
+                            Parameter = "AAM",
+                            Method = "Non-Hierarchical")
+
+L0.LAM.df.1sp <- data.frame(L0 = c(L0.LAM.att, L0.LAM.coe, L0.LAM.lon),
+                            Species = c(rep("att", length(L0.LAM.att)),
+                                        rep("coe", length(L0.LAM.coe)),
+                                        rep("lon", length(L0.LAM.lon))),
+                            Parameter = "LAM",
+                            Method = "Non-Hierarchical")
+L0.LAB.df.1sp <- data.frame(L0 = c(L0.LAB.att, L0.LAB.coe, L0.LAB.lon),
+                            Species = c(rep("att", length(L0.LAB.att)),
+                                        rep("coe", length(L0.LAB.coe)),
+                                        rep("lon", length(L0.LAB.lon))),
+                            Parameter = "LAB",
+                            Method = "Non-Hierarchical")
+
+L0.df.1sp <- rbind(L0.AAM.df.1sp, L0.LAM.df.1sp, L0.LAB.df.1sp)
+
+AAM.samples <- as.matrix(AAM.hierarchical$jags.out$samples)
+LAM.samples <- as.matrix(LAM.hierarchical$jags.out$samples)
+LAB.samples <- as.matrix(LAB.hierarchical$jags.out$samples)
+
+L0.AAM.att.h <- -AAM.samples[,"alpha[1]"]/AAM.samples[,"beta[1]"]
+L0.LAM.att.h <- -LAM.samples[,"alpha[1]"]/LAM.samples[,"beta[1]"]
+L0.LAB.att.h <- -LAB.samples[,"alpha[1]"]/LAB.samples[,"beta[1]"]
+
+L0.AAM.coe.h <- -AAM.samples[,"alpha[2]"]/AAM.samples[,"beta[2]"]
+L0.LAM.coe.h <- -LAM.samples[,"alpha[2]"]/LAM.samples[,"beta[2]"]
+L0.LAB.coe.h <- -LAB.samples[,"alpha[2]"]/LAB.samples[,"beta[2]"]
+
+L0.AAM.lon.h <- -AAM.samples[,"alpha[3]"]/AAM.samples[,"beta[3]"]
+L0.LAM.lon.h <- -LAM.samples[,"alpha[3]"]/LAM.samples[,"beta[3]"]
+L0.LAB.lon.h <- -LAB.samples[,"alpha[3]"]/LAB.samples[,"beta[3]"]
+
+L0.AAM.df.h <- data.frame(L0 = c(L0.AAM.att.h, L0.AAM.coe.h, L0.AAM.lon.h),
+                          Species = c(rep("att", length(L0.AAM.att.h)),
+                                      rep("coe", length(L0.AAM.coe.h)),
+                                      rep("lon", length(L0.AAM.lon.h))),
+                          Parameter = "AAM",
+                          Method = "Hierarchical")
+L0.LAM.df.h <- data.frame(L0 = c(L0.LAM.att.h, L0.LAM.coe.h, L0.LAM.lon.h),
+                          Species = c(rep("att", length(L0.LAM.att.h)),
+                                      rep("coe", length(L0.LAM.coe.h)),
+                                      rep("lon", length(L0.LAM.lon.h))),
+                          Parameter = "LAM",
+                          Method = "Hierarchical")
+
+L0.LAB.df.h <- data.frame(L0 = c(L0.LAB.att.h, L0.LAB.coe.h, L0.LAB.lon.h),
+                          Species = c(rep("att", length(L0.LAB.att.h)),
+                                      rep("coe", length(L0.LAB.coe.h)),
+                                      rep("lon", length(L0.LAB.lon.h))),
+                          Parameter = "LAB",
+                          Method = "Hierarchical")
+
+L0.df.h <- rbind(L0.AAM.df.h, L0.LAM.df.h, L0.LAB.df.h)
+
+L0.df <- rbind(L0.df.1sp, L0.df.h)
+
+p.AAM <- ggplot(L0.df %>% filter(Parameter == "AAM")) +
+  geom_density(aes(x = L0, fill = Method),
+               alpha = 0.5) +
+  facet_grid(~ Species, scales = "free") +
+  theme(legend.position = "top")
+
+p.AAM
+```
+```{r}
+p.LAM <- ggplot(L0.df %>% filter(Parameter == "LAM")) +
+  geom_density(aes(x = L0, fill = Method),
+               alpha = 0.5) +
+  facet_grid(~ Species, scales = "free") +
+  theme(legend.position = "top")
+
+p.LAM
+```
+
+```{r}
+p.LAB <- ggplot(L0.df %>% filter(Parameter == "LAB")) +
+  geom_density(aes(x = L0, fill = Method),
+               alpha = 0.5) +
+  facet_grid(~ Species, scales = "free") +
+  theme(legend.position = "top")
+
+p.LAB
+```
+
