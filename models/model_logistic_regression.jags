@@ -1,0 +1,41 @@
+model {
+
+  # likelihood -> one line for every individual
+  for (i in 1:N) {
+
+    y[i] ~ dbern(p[i])
+
+    logit(p[i]) <- alpha[species_id[i]] +
+                   beta[species_id[i]] * X[i]
+  }
+  
+  # species-level parameters
+  for (s in 1:S) {
+
+
+    alpha[s] ~ dnorm(mu_alpha, tau_alpha) # mu_alpha is the avg into across sp
+    # sigma_alpha is just describing how different the sp ints are
+    # tau is the signma_alpha precision
+    beta[s] ~ dnorm(mu_beta, tau_beta) # every species gets its own slope
+  }
+
+  # hyperpriors for the avg slope and intercept
+  mu_alpha ~ dnorm(0, 0.01)
+
+  mu_beta ~ dnorm(0, 0.01)
+
+  # hyperpriors for variation amongst species
+  sigma_alpha ~ dunif(0, 10)
+
+  sigma_beta ~ dunif(0, 10)
+
+  # i'm converting standard deviations into JAGS precisions
+  tau_alpha <- 1 / pow(sigma_alpha, 2)
+
+  tau_beta <- 1 / pow(sigma_beta, 2)
+  
+  #for (s in 1:S) {
+  #  L0[s] <- exp(log(-alpha[s]) - log(beta[s]))
+
+  #}
+}
