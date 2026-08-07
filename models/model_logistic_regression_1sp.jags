@@ -2,6 +2,7 @@
 # of Stenella with n.sp species (attenuata [1], coeruleoalba [2], and
 # longirostris [3]). 
 
+# Some edits on your code here. 
 
 model {
 	for (i in 1:N) {
