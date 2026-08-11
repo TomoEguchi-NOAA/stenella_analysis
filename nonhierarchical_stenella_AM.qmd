@@ -1,0 +1,308 @@
+---
+title: "nonhierarchical_stenella_AM"
+author: "Raija Hammad"
+format: html
+editor: visual
+---
+
+## Objective
+
+This analysis uses non-hierarchical Bayesian logistic regression to estimate age at maturity for three *Stenella* species: *S. attenuata, S. coerueleoalba,* and *S. longirostris*.
+
+Things to note:
+
+- Maturity status is modeled as a binary response as a function of age for each species.
+
+- The age corresponding to a 50% probability of maturity is used as my estimate of age at maturity.
+
+## Loading Packages
+
+This analysis uses tidyverse for manipulating the data, coda for posterior samples, and rjags/jagsUI to run Bayesian models in JAGS.
+
+```{r}
+library(tidyverse)
+library(coda)
+library(rjags)
+library(jagsUI)
+
+save.output <- TRUE
+
+source("loading_data.R")
+```
+
+## Data Preparation for Age and Maturity
+
+Observations with both age and maturity status were kept; rows containing missing values were removed.
+
+#### *Stenella Attenuata*
+
+```{r}
+AM.data.ATT <- attenuata %>%
+  select(Age, isMature_bin) %>%
+  drop_na()
+
+mean.age.ATT <- mean(AM.data.ATT$Age)
+sd.age.ATT <- sd(AM.data.ATT$Age)
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+AM.data.COE <- coeruleoalba %>%
+  select(Age, isMature_bin) %>%
+  drop_na()
+
+mean.age.COE <- mean(AM.data.COE$Age)
+sd.age.COE <- sd(AM.data.COE$Age)
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+AM.data.LON <- longirostris %>%
+  select(Age, isMature_bin) %>%
+  drop_na()
+
+mean.age.LON <- mean(AM.data.LON$Age)
+sd.age.LON <- sd(AM.data.LON$Age)
+```
+
+The resulting datasets contains individuals with usable age and maturity information.
+
+## Bayesian Logistic Regression
+
+Naming constants and vectors in the data for JAGS. For each individual \\(i\\), maturity status is treated as a Bernoulli response.
+
+$$y_i \sim \text{Bernoulli}(p_i)$$
+
+with maturity probability related to age through the logit function:
+
+$$\text{logit}(p_i) = \alpha + \beta X_i$$
+
+where \\(X_i\\) is age, \\(\\alpha\\) is the intercept, and \\(\\beta\\) describes the relationship between age and probability of maturity.
+
+#### *Stenella Attenuata*
+
+```{r}
+jags.data.AM.ATT <- list(
+  N = nrow(AM.data.ATT),
+  X = as.vector(AM.data.ATT$Age),
+  y = AM.data.ATT$isMature_bin
+)
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+jags.data.AM.COE <- list(
+  N = nrow(AM.data.COE),
+  X = as.vector(AM.data.COE$Age),
+  y = AM.data.COE$isMature_bin
+)
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+jags.data.AM.LON <- list(
+  N = nrow(AM.data.LON),
+  X = as.vector(AM.data.LON$Age),
+  y = AM.data.LON$isMature_bin
+)
+```
+
+### MCMC
+
+Five independent MCMC chains were run, each used 50000 iterations with the first 25000 discarded as burn-in and every 100th posterior sample kept.
+
+#### *Stenella Attenuata*
+
+```{r}
+MCMC.AM.ATT <- list(
+  n.samples = 50000,
+  n.thin = 100,
+  n.burnin = 25000,
+  n.chains = 5
+)
+
+jags.params.AM.ATT <- c("alpha", "beta")
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+MCMC.AM.COE <- list(
+  n.samples = 50000,
+  n.thin = 100, 
+  n.burnin = 25000,
+  n.chains = 5
+)
+
+jags.params.AM.COE <- c("alpha", "beta")
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+MCMC.AM.LON <- list(
+  n.samples = 50000,
+  n.thin = 100, 
+  n.burnin = 25000,
+  n.chains = 5
+)
+
+jags.params.AM.LON <- c("alpha", "beta")
+```
+
+### Model
+
+#### *Stenella Attenuata*
+
+```{r}
+NH.AM.ATT <- jagsUI::jags(
+  data = jags.data.AM.ATT,
+  inits = NULL,
+  parameters.to.save = jags.params.AM.ATT,
+  model.file = "models/model_logistic_regression_1sp.jags",
+  n.chains = MCMC.AM.ATT$n.chains,
+  n.burnin = MCMC.AM.ATT$n.burnin,
+  n.thin = MCMC.AM.ATT$n.thin,
+  n.iter = MCMC.AM.ATT$n.samples,
+  DIC = TRUE,
+  parallel = TRUE
+)
+
+if (save.output)
+  saveRDS(NH.AM.ATT,
+          file = "RData/NH.AM.ATT.rds")
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+NH.AM.COE <- jagsUI::jags(
+  data = jags.data.AM.COE,
+  inits = NULL,
+  parameters.to.save = jags.params.AM.COE,
+  model.file = "models/model_logistic_regression_1sp.jags",
+  n.chains = MCMC.AM.COE$n.chains,
+  n.burnin = MCMC.AM.COE$n.burnin,
+  n.thin = MCMC.AM.COE$n.thin,
+  n.iter = MCMC.AM.COE$n.samples,
+  DIC = TRUE,
+  parallel = TRUE
+)
+
+if (save.output)
+  saveRDS(NH.AM.COE,
+          file = "RData/NH.AM.COE")
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+NH.AM.LON <- jagsUI::jags(
+  data = jags.data.AM.LON,
+  inits = NULL,
+  parameters.to.save = jags.params.AM.LON,
+  model.file = "models/model_logistic_regression_1sp.jags",
+  n.chains = MCMC.AM.LON$n.chains,
+  n.burnin = MCMC.AM.LON$n.burnin,
+  n.thin = MCMC.AM.LON$n.thin,
+  n.iter = MCMC.AM.LON$n.samples,
+  DIC = TRUE,
+  parallel = TRUE
+)
+
+if (save.output)
+  saveRDS(NH.AM.LON,
+          file = "RData/NH.AM.LON")
+```
+
+# Results
+
+### Extracting Posterior Samples
+
+#### *Stenella Attenuata*
+
+```{r}
+all.samples.ATT <- as.matrix(NH.AM.ATT$samples)
+
+alpha.samples.ATT <- all.samples.ATT[, "alpha"]
+beta.samples.ATT <- all.samples.ATT[, "beta"]
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+all.samples.COE <- as.matrix(NH.AM.COE$samples)
+
+alpha.samples.COE <- all.samples.COE[, "alpha"]
+beta.samples.COE <- all.samples.COE[, "beta"]
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+all.samples.LON <- as.matrix(NH.AM.LON$samples)
+
+alpha.samples.LON <- all.samples.LON[, "alpha"]
+beta.samples.LON <- all.samples.LON[, "beta"]
+```
+
+### Age Estimate
+
+The age at which an animal has a 50% probability of being mature.
+
+#### *Stenella Attenuata*
+
+```{r}
+p.50.AM.ATT <- (-alpha.samples.ATT / beta.samples.ATT)
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+p.50.AM.COE <- (-alpha.samples.COE / beta.samples.COE)
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+p.50.AM.LON <- (-alpha.samples.LON / beta.samples.LON)
+```
+
+### Summarizing Posterior Estimates
+
+#### *Stenella Attenuata*
+
+```{r}
+summary(p.50.AM.ATT)
+
+quantile( 
+  p.50.AM.ATT, 
+  probs = c(0.025, 0.5, 0.975)
+)
+```
+
+#### *Stenella Coerueleoalba*
+
+```{r}
+summary(p.50.AM.COE)
+
+quantile(
+  p.50.AM.COE,
+  probs = c(0.025, 0.5, 0.975)
+)
+```
+
+#### *Stenella Longirostris*
+
+```{r}
+summary(p.50.AM.LON)
+
+quantile(
+  p.50.AM.LON,
+  probs = c(0.025, 0.5, 0.975)
+)
+```
